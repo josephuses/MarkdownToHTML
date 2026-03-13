@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Moodle Markdown to XML Quiz Editor</title>
+    
+    <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/codemirror.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/codemirror.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/mode/xml/xml.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/mode/markdown/markdown.min.js"></script>
+
+    <style>
+        :root {
+            --primary: #6f42c1; 
+            --primary-hover: #5a32a3;
+            --bg: #f8f9fa;
+            --card-bg: #ffffff;
+            --border: #dee2e6;
+            --correct: #d4edda;
+            --correct-text: #155724;
+            --wrong: #f8d7da;
+            --wrong-text: #721c24;
+            --snippet-bg: #e9ecef;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg);
+            color: #333;
+            margin: 0;
+            padding: 0;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        header {
+            background: var(--card-bg);
+            padding: 10px 20px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+            z-index: 10;
+        }
+
+        header h1 { color: var(--primary); margin: 0; font-size: 1.5rem; }
+
+        .header-controls { display: flex; gap: 8px; align-items: center; }
+
+        button {
+            background-color: var(--primary);
+            color: white;
+            border: none;
+            padding: 8px 14px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 0.85em;
+        }
+
+        button:hover { background-color: var(--primary-hover); }
+        button.secondary-btn { background-color: #6c757d; }
+        button.secondary-btn:hover { background-color: #5a6268; }
+        button.accent-btn { background-color: #28a745; }
+        button.accent-btn:hover { background-color: #218838; }
+
+        .workspace { display: flex; flex: 1; overflow: hidden; }
+        .pane { flex: 1; display: flex; flex-direction: column; padding: 15px; overflow-y: auto; }
+        .editor-pane { border-right: 2px solid var(--border); background: #fff; }
+        .viewer-pane { background: var(--bg); }
+
+        .toolbar {
+            display: flex; justify-content: space-between; gap: 8px; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--border);
+        }
+        
+        .snippet-group { display: flex; gap: 6px; flex-wrap: wrap; }
+        .snippet-btn { background-color: var(--snippet-bg); color: #333; font-weight: normal; padding: 5px 10px; }
+        .snippet-btn:hover { background-color: #dde0e3; }
+
+        .editor-container { flex: 1; overflow: hidden; border: 1px solid var(--border); border-radius: 4px; }
+        .CodeMirror { height: 100%; font-family: 'Courier New', Courier, monospace; font-size: 14px; }
+        .CodeMirror-readonly { background-color: #f4f4f4; color: #555; }
+
+        .question-card {
+            background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.03);
+        }
+        .q-header { display: flex; justify-content: space-between; border-bottom: 1px solid #eee; padding-bottom: 10px; margin-bottom: 15px; }
+        .q-name { font-weight: bold; color: #555; }
+        .q-type { background: #e9ecef; padding: 2px 8px; border-radius: 12px; font-size: 0.85em; color: #495057; text-transform: uppercase; }
+        .q-text { font-size: 1.1em; margin-bottom: 20px; }
+        
+        .answer-item { padding: 10px; border: 1px solid #eee; border-radius: 4px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: flex-start; }
+        .answer-content { flex-grow: 1; }
+        .grade-badge { font-size: 0.85em; font-weight: bold; padding: 2px 6px; border-radius: 4px; margin-left: 10px; white-space: nowrap; }
+        .grade-100 { background-color: var(--correct); color: var(--correct-text); }
+        .grade-partial { background-color: #fff3cd; color: #856404; }
+        .grade-0 { background-color: var(--wrong); color: var(--wrong-text); }
+        .feedback { font-size: 0.9em; color: #666; margin-top: 5px; font-style: italic; border-left: 3px solid #ccc; padding-left: 8px; }
+        .numerical-tolerance { font-size: 0.9em; color: #666; font-family: monospace; }
+
+        #error-msg { color: #dc3545; background: #f8d7da; padding: 10px; border-radius: 4px; display: none; margin-bottom: 15px; }
+    </style>
+</head>
+<body>
+
+<header>
+    <h1>Moodle Markdown to XML Quiz Editor</h1>
+    <div class="header-controls">
+        <button class="secondary-btn" id="saveBtn" onclick="saveMarkdown()">Save (Ctrl+S)</button>
+        <button class="accent-btn" onclick="toggleView()" id="toggleBtn">View Generated XML</button>
+        <button class="accent-btn" onclick="downloadXML()">Download XML</button>
+        <button onclick="processAndRender()">Render Preview</button>
+    </div>
+</header>
+
+<div class="workspace">
+    <div class="pane editor-pane">
+        <div class="toolbar">
+            <div class="snippet-group">
+                <button class="snippet-btn" onclick="insertSnippet('mcq')">+ Multichoice</button>
+                <button class="snippet-btn" onclick="insertSnippet('tf')">+ True/False</button>
+                <button class="snippet-btn" onclick="insertSnippet('sa')">+ Short Answer</button>
+                <button class="snippet-btn" onclick="insertSnippet('num')">+ Numerical</button>
+            </div>
+            <div class="snippet-group">
+                <button class="secondary-btn" onclick="editor.undo()">↶</button>
+                <button class="secondary-btn" onclick="editor.redo()">↷</button>
+            </div>
+        </div>
+        <div class="editor-container">
+            <textarea id="mdInput"></textarea>
+        </div>
+    </div>
+
+    <div class="pane viewer-pane">
+        <div id="error-msg"></div>
+        <div id="output">
+            <p style="text-align:center; color:#666; margin-top: 50px;">
+                Enter Markdown on the left and click "Render Preview" (or Ctrl+S).
+            </p>
+        </div>
+    </div>
+</div>
+
+<script>
+    let isMarkdownMode = true;
+    let generatedXML = "";
+
+    const defaultText = `# Question 1: Polynomials
+What is the derivative of $$f(x) = 3x^2 + 2x$$?
+
+- [ ] $f'(x) = 3x + 2$
+> Don't forget the power rule! Bring down the 2.
+- [x] $f'(x) = 6x + 2$
+> Excellent work. 
+- [ ] $f'(x) = x^3 + x^2$
+> That is the integral, not the derivative.
+
+---
+
+# Question 2: Markdown test
+Which of the following are **programming languages**? (Select all that apply)
+
+- [x] Python
+- [x] JavaScript
+> JS runs the web!
+- [ ] HTML
+> HTML is a markup language, not a programming language.
+`;
+
+    const editor = CodeMirror.fromTextArea(document.getElementById("mdInput"), {
+        mode: "markdown",
+        lineNumbers: true,
+        theme: "default",
+        lineWrapping: true,
+        extraKeys: {
+            "Ctrl-S": function(cm){ processAndRender(); saveMarkdown(); },
+            "Cmd-S": function(cm){ processAndRender(); saveMarkdown(); }
+        }
+    });
+
+    const outputDiv = document.getElementById('output');
+    const toggleBtn = document.getElementById('toggleBtn');
+
+    window.onload = function() {
+        const savedData = localStorage.getItem('moodle_md_save');
+        editor.setValue(savedData || defaultText);
+        processAndRender();
+    };
+
+    function saveMarkdown() {
+        if(isMarkdownMode) {
+            localStorage.setItem('moodle_md_save', editor.getValue());
+            const saveBtn = document.getElementById('saveBtn');
+            saveBtn.innerText = "Saved!";
+            setTimeout(() => saveBtn.innerText = "Save (Ctrl+S)", 1500);
+        }
+    }
+
+    const snippets = {
+        'mcq': `\n---\n\n# MCQ Title\nQuestion text here.\n- [ ] Wrong answer\n> Feedback\n- [x] Correct answer\n`,
+        'tf': `\n---\n\n# True/False Title\nType: truefalse\nQuestion text here.\n- [x] True\n- [ ] False\n> Feedback for false\n`,
+        'sa': `\n---\n\n# Short Answer Title\nType: shortanswer\nQuestion text here.\n- [x] Exact Correct Answer\n- [ ] Common Wrong Answer\n> Feedback for this wrong answer\n`,
+        'num': `\n---\n\n# Numerical Title\nType: numerical\nWhat is 10 + 10?\n- [x] 20 +- 0\n> Correct!\n`
+    };
+
+    function insertSnippet(type) {
+        if (!isMarkdownMode) {
+            alert("Switch back to Markdown mode to edit.");
+            return;
+        }
+        editor.replaceSelection(snippets[type]);
+        editor.focus();
+    }
+
+    // --- Core Logic: Convert Markdown to Moodle XML ---
+    function generateXMLFromMD(mdText) {
+        const blocks = mdText.split(/^---$/m).map(b => b.trim()).filter(b => b);
+        let xml = `<?xml version="1.0" encoding="UTF-8"?>\n<quiz>\n`;
+
+        blocks.forEach((block, index) => {
+            const lines = block.split('\n');
+            let title = `Question ${index + 1}`;
+            let qType = 'multichoice'; // Default
+            let qTextLines = [];
+            let answers = [];
+            let currentAns = null;
+
+            for (let line of lines) {
+                if (line.startsWith('# ')) {
+                    title = line.substring(2).trim();
+                } 
+                else if (line.match(/^Type:\s*(multichoice|truefalse|shortanswer|numerical)/i)) {
+                    qType = line.match(/^Type:\s*(.*)/i)[1].toLowerCase().trim();
+                }
+                else if (line.match(/^- \[(x|X| )\] /)) {
+                    let isCorrect = line.match(/^- \[(x|X)\] /) !== null;
+                    let text = line.replace(/^- \[[xX ]\] /, '').trim();
+                    currentAns = { text: text, isCorrect: isCorrect, feedback: '' };
+                    answers.push(currentAns);
+                } 
+                else if (line.startsWith('> ') && currentAns) {
+                    currentAns.feedback += line.substring(2).trim() + '\n';
+                } 
+                else {
+                    if (!currentAns) qTextLines.push(line);
+                }
+            }
+
+            if(answers.length === 0) return; 
+
+            // --- FIXED: Math Processor ---
+            const processHTML = (text) => {
+                if (!text) return "";
+                const mathBlocks = [];
+                
+                // 1. Swap $$ with \[ \] and replace with safe placeholder
+                let safeText = text.replace(/\$\$(.*?)\$\$/gs, (match, formula) => {
+                    mathBlocks.push(`\\[${formula}\\]`);
+                    return `@@MATH_BLOCK_${mathBlocks.length - 1}@@`;
+                });
+                
+                // 2. Swap $ with \( \) and replace with safe placeholder
+                safeText = safeText.replace(/\$(.*?)\$/gs, (match, formula) => {
+                    mathBlocks.push(`\\(${formula}\\)`);
+                    return `@@MATH_BLOCK_${mathBlocks.length - 1}@@`;
+                });
+                
+                // 3. Process the Markdown
+                let html = marked.parse(safeText).trim();
+                
+                // 4. Put the math back in using a function replacement to avoid regex conflicts
+                mathBlocks.forEach((math, idx) => {
+                    html = html.replace(`@@MATH_BLOCK_${idx}@@`, () => math);
+                });
+                return html;
+            };
+
+            const qHTML = processHTML(qTextLines.join('\n'));
+
+            // Start Question XML
+            xml += `  <question type="${qType}">\n`;
+            xml += `    <name><text><![CDATA[${title}]]></text></name>\n`;
+            xml += `    <questiontext format="html"><text><![CDATA[${qHTML}]]></text></questiontext>\n`;
+
+            if (qType === 'shortanswer') {
+                xml += `    <usecase>0</usecase>\n`; // 0 = case insensitive
+            } else if (qType === 'multichoice') {
+                const correctCount = answers.filter(a => a.isCorrect).length;
+                xml += `    <single>${correctCount === 1 ? 'true' : 'false'}</single>\n`;
+                xml += `    <shuffleanswers>true</shuffleanswers>\n`;
+            }
+
+            // Answers loop
+            const correctCount = answers.filter(a => a.isCorrect).length;
+
+            answers.forEach(ans => {
+                let fraction = ans.isCorrect ? 100 : 0;
+                
+                if (qType === 'multichoice') {
+                    if (ans.isCorrect) fraction = correctCount === 1 ? 100 : (100 / correctCount).toFixed(3);
+                    else if (correctCount > 1) fraction = (-100 / answers.length).toFixed(3); 
+                }
+
+                let ansText = ans.text;
+                let tolerance = "0";
+
+                if (qType === 'numerical') {
+                    const numMatch = ansText.match(/^(.+?)(?:\s*\+[-/]\s*([\d\.]+))?$/);
+                    if (numMatch) {
+                        ansText = numMatch[1].trim();
+                        tolerance = numMatch[2] ? numMatch[2].trim() : "0";
+                    }
+                }
+
+                if (qType === 'truefalse') {
+                    ansText = ansText.toLowerCase() === 'true' ? 'true' : 'false';
+                }
+
+                const ansHTML = (qType === 'multichoice') ? processHTML(ansText) : ansText;
+                const fbHTML = ans.feedback ? processHTML(ans.feedback) : '';
+
+                let ansFormat = (qType === 'multichoice') ? 'format="html"' : 'format="moodle_auto_format"';
+
+                xml += `    <answer fraction="${fraction}" ${ansFormat}>\n`;
+                xml += `      <text><![CDATA[${ansHTML}]]></text>\n`;
+                
+                if (qType === 'numerical') {
+                    xml += `      <tolerance>${tolerance}</tolerance>\n`;
+                }
+
+                if (fbHTML) {
+                    xml += `      <feedback format="html"><text><![CDATA[${fbHTML}]]></text></feedback>\n`;
+                }
+                xml += `    </answer>\n`;
+            });
+            xml += `  </question>\n`;
+        });
+        
+        xml += `</quiz>`;
+        return xml;
+    }
+
+    // --- UI Actions ---
+    function processAndRender() {
+        if (!isMarkdownMode) return; 
+        const mdText = editor.getValue();
+        generatedXML = generateXMLFromMD(mdText);
+        renderCardsFromXMLString(generatedXML);
+    }
+
+    function toggleView() {
+        if (isMarkdownMode) {
+            processAndRender(); 
+            editor.setValue(generatedXML);
+            editor.setOption("mode", "xml");
+            editor.setOption("readOnly", "nocursor");
+            toggleBtn.innerText = "Back to Markdown Editor";
+            document.querySelector('.editor-container').classList.add('CodeMirror-readonly');
+        } else {
+            const savedData = localStorage.getItem('moodle_md_save') || defaultText;
+            editor.setValue(savedData);
+            editor.setOption("mode", "markdown");
+            editor.setOption("readOnly", false);
+            toggleBtn.innerText = "View Generated XML";
+            document.querySelector('.editor-container').classList.remove('CodeMirror-readonly');
+        }
+        isMarkdownMode = !isMarkdownMode;
+    }
+
+    function downloadXML() {
+        if(isMarkdownMode) processAndRender();
+        const blob = new Blob([generatedXML], { type: 'text/xml' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'moodle_markdown_export.xml';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }
+
+    // --- Visualizer Renderer ---
+    function renderCardsFromXMLString(xmlString) {
+        outputDiv.innerHTML = '';
+        try {
+            const parser = new DOMParser();
+            const xmlDoc = parser.parseFromString(xmlString, "text/xml");
+            const questions = xmlDoc.getElementsByTagName("question");
+            
+            for (let i = 0; i < questions.length; i++) {
+                const q = questions[i];
+                if (q.getAttribute("type") === "category") continue;
+                outputDiv.appendChild(createQuestionCard(q, i + 1));
+            }
+            if (window.MathJax) {
+                // Tell MathJax to process the outputDiv to convert \( \) and \[ \] into rendered equations
+                MathJax.typesetPromise([outputDiv]).catch((err) => console.log(err));
+            }
+        } catch(e) {
+            console.error("Rendering error", e);
+        }
+    }
+
+    function getNodeVal(parent, tagName) {
+        const node = parent.getElementsByTagName(tagName)[0];
+        if (node) {
+            const textNode = node.getElementsByTagName("text")[0];
+            return textNode ? textNode.textContent : node.textContent;
+        }
+        return "";
+    }
+
+    function createQuestionCard(qNode, index) {
+        const name = getNodeVal(qNode, "name");
+        const type = qNode.getAttribute("type");
+        let text = getNodeVal(qNode, "questiontext");
+        
+        const div = document.createElement("div");
+        div.className = "question-card";
+
+        let html = `
+            <div class="q-header">
+                <span class="q-name">Q${index}: ${name}</span>
+                <span class="q-type">${type}</span>
+            </div>
+            <div class="q-text">${text}</div>
+            <ul class="answers-list">
+        `;
+
+        const answers = qNode.getElementsByTagName("answer");
+        for (let j = 0; j < answers.length; j++) {
+            let fraction = parseFloat(answers[j].getAttribute("fraction"));
+            let ansText = getNodeVal(answers[j], "text") || answers[j].textContent; 
+            let feedback = getNodeVal(answers[j], "feedback");
+            
+            let badgeClass = fraction > 0 ? (fraction === 100 ? "grade-100" : "grade-partial") : "grade-0";
+
+            let extraInfo = "";
+            if (type === 'numerical') {
+                const tolNode = answers[j].getElementsByTagName("tolerance")[0];
+                if(tolNode && tolNode.textContent !== "0") {
+                    extraInfo = ` <span class="numerical-tolerance">(&plusmn; ${tolNode.textContent})</span>`;
+                }
+            }
+
+            html += `
+                <li class="answer-item">
+                    <div class="answer-content">
+                        <strong>${ansText}</strong> ${extraInfo}
+                        ${feedback ? `<div class="feedback">${feedback}</div>` : ''}
+                    </div>
+                    <span class="grade-badge ${badgeClass}">${fraction}%</span>
+                </li>
+            `;
+        }
+        html += `</ul>`;
+        div.innerHTML = html;
+        return div;
+    }
+</script>
+
+</body>
+</html>
